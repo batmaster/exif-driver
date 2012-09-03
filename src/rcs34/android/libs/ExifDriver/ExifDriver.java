@@ -201,10 +201,8 @@ public class ExifDriver {
                                                  // header
   private String sourceFile;
   private byte[] origEXIFdata;
-  private final byte[] SOI = new byte[] { (byte) 0xFF, (byte) 0xD8 }; // JPEG's
-                                                                      // Start
-                                                                      // of
-                                                                      // image
+//JPEG's Start of image
+  private final byte[] SOI = new byte[] { (byte) 0xFF, (byte) 0xD8 }; 
   private final byte[] APP1Marker = new byte[] { (byte) 0xFF, (byte) 0xE1 };
   private final byte[] EXIFHeader = new byte[] { 'E', 'x', 'i', 'f', '\0', '\0' };
   // Note it's a "Intel fashion one" we use it's values only during saving
