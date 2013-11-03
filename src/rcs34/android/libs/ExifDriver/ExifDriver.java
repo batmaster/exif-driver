@@ -223,6 +223,7 @@ public class ExifDriver {
   private HashMap<Integer, ExifValue> ifd1 = new HashMap<Integer, ExifValue>();
   private HashMap<Integer, ExifValue> ifdIOper = new HashMap<Integer, ExifValue>();
   private boolean readyToWork = false;
+  private boolean debug=true;
 
   /**
    * Get instance of driver for given image file. If everything works well (file
@@ -302,7 +303,7 @@ public class ExifDriver {
           origEXIFdata = new byte[exifDataSize
               - (LENGTH_EXIF_SIZE_DECL + EXIFHeader.length)];
           System.out.println("APP1 data size: "
-              + Integer.toHexString(exifDataSize));
+              + Long.toHexString(exifDataSize));
           // data will start with TIFF header
           channel.position(origAPP1MarkerOffset + LENGTH_APP1_EXIF_HEADER);
           fis.read(origEXIFdata);
@@ -372,14 +373,15 @@ public class ExifDriver {
    * with information.
    * 
    * @param _data
+   * @throws Exception 
    */
   private void readExifData(byte[] _data) {
     originalAlign = (_data[0] << 8) + (_data[1] & 0xFF);
     int ifdStart = readUInt(_data, 4, 4); // See the TIFF header
-    ifdStart = readIfd(ifd0, _data, ifdStart);
+   ifdStart = readIfd(ifd0, _data, ifdStart);
     // Was there any IFD1 reference?
     if (ifdStart > 0) {
-      readIfd(ifd1, _data, ifdStart);
+    	readIfd(ifd1, _data, ifdStart);
       // Remember thumbnail info
       if (ifd1.containsKey(TAG_JPEG_INTERCHANGE_FORMAT)) {
         origThumbnailOffset = (Integer) ifd1.get(TAG_JPEG_INTERCHANGE_FORMAT)
@@ -399,7 +401,7 @@ public class ExifDriver {
     }
     // Is there a IFDExif reference?
     if (ifd0.get(TAG_EXIF_POINTER) != null) {
-      ifdStart = ((ValueLongs) ifd0.get(TAG_EXIF_POINTER)).getValues()[0];
+    	ifdStart = ((ValueLongs) ifd0.get(TAG_EXIF_POINTER)).getValues()[0];
       readIfd(ifdExif, _data, ifdStart);
       if (ifdExif.get(TAG_INTEROPERABILITY_POINTER) != null) {
         ifdStart = ((ValueLongs) ifdExif.get(TAG_INTEROPERABILITY_POINTER))
@@ -427,11 +429,14 @@ public class ExifDriver {
    *         non-zero, refers to next ifd. As a matter of fact, the non-zero is
    *         expected
    *         only in IFD0.
+   * @throws Exception 
    */
   private int readIfd(HashMap<Integer, ExifValue> _ifd, byte[] _data, int _start) {
     int entriesNumber = readUInt(_data, _start, 2);
-    // Log.v(LOGTAG, entriesNumber + " entries found in directory begining at "
-    // + Integer.toHexString(_start + 12));
+    if(debug){
+    System.out.println(entriesNumber + " entries found in ifd begining at "
+    + Integer.toHexString(origAPP1MarkerOffset + LENGTH_APP1_EXIF_HEADER+_start));
+    }
     for (int i = 0; i < entriesNumber; i++) {
       int entryStart = _start + 2 + i * 12;// 2B is size, 12B is the
       // length of each item
@@ -441,21 +446,30 @@ public class ExifDriver {
       int datatype = readUInt(_data, entryStart + 2, 2);
       int components = readUInt(_data, entryStart + 4, 4);
       // If the totalLength is >4 it does not fit in directory
-      int totalLength = components * (Integer) COMP_WIDTHS.get(datatype);
+      int totalLength=0;
+      Object dType=COMP_WIDTHS.get(datatype);
+      if(dType!=null){
+      totalLength = components * (Integer)dType ;
+      }else{
+      	_ifd.clear();
+      	return 0;
+      }
       // Offset right in directory
       int offset = entryStart + 8;
       if (totalLength > 4) {
         // Offset in data area
         offset = readUInt(_data, offset, 4);
       }
-      // if (tag == 0xa005 || tag == TAG_EXIF_POINTER || tag ==
-      // TAG_GPS_POINTER) {
-      // System.out.println("Tag: " + Integer.toHexString(tag));
-      // System.out.println("Datatype: " + Integer.toHexString(datatype));
-      // System.out.println("Components: " +
-      // Integer.toHexString(components));
-      // System.out.println("Offset: " + Integer.toHexString(offset));
-      // }
+      if(debug){
+       if (tag == TAG_INTEROPERABILITY_POINTER  || tag == TAG_EXIF_POINTER || tag ==
+       TAG_GPS_POINTER) {
+       System.out.print("Pointer: "+tag );
+       System.out.print(" Datatype: " + Integer.toHexString(datatype));
+       System.out.print(" Components: " +
+       Integer.toHexString(components));
+       System.out.println(" Offset: " + Integer.toHexString(origAPP1MarkerOffset + LENGTH_APP1_EXIF_HEADER+offset));
+       }
+      }
       switch (datatype) {
       case FORMAT_UNSIGNED_BYTE:
         ValueUBytes uByteValue = new ValueUBytes();
