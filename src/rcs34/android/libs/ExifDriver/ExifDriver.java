@@ -223,7 +223,7 @@ public class ExifDriver {
   private HashMap<Integer, ExifValue> ifd1 = new HashMap<Integer, ExifValue>();
   private HashMap<Integer, ExifValue> ifdIOper = new HashMap<Integer, ExifValue>();
   private boolean readyToWork = false;
-  private boolean debug=true;
+  private boolean debug=false;
 
   /**
    * Get instance of driver for given image file. If everything works well (file
