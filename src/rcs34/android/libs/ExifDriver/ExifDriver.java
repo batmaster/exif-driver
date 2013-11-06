@@ -9,6 +9,12 @@ import java.util.logging.Logger;
 import java.io.*;
 import java.nio.channels.FileChannel;
 
+import rcs34.android.libs.ExifDriver.Values.ExifValue;
+import rcs34.android.libs.ExifDriver.Values.UndefinedValueAccessException;
+import rcs34.android.libs.ExifDriver.Values.ValueByteArray;
+import rcs34.android.libs.ExifDriver.Values.ValueNumber;
+import rcs34.android.libs.ExifDriver.Values.ValueRationals;
+
 /**
  * Driver for reading/writting EXIF meta data to JPEG images. It tries to
  * conform Exif Version 2.2. For more info see http://exif.org/ JPEG data from
@@ -46,16 +52,20 @@ public class ExifDriver {
 
 	private final String LOGTAG = getClass().getName();
 	// Datatypes
-	private final int FORMAT_UNSIGNED_BYTE = 0x01;
-	private final int FORMAT_ASCII_STRINGS = 0x02;
-	private final int FORMAT_UNSIGNED_SHORT = 0x03;
-	private final int FORMAT_UNSIGNED_LONG = 0x04;
-	private final int FORMAT_UNSIGNED_RATIONAL = 0x05;
-	private final int FORMAT_SIGNED_BYTE = 0x06;
-	private final int FORMAT_UNDEFINED = 0x07;
-	private final int FORMAT_SIGNED_SHORT = 0x08;
-	private final int FORMAT_SIGNED_LONG = 0x09;
-	private final int FORMAT_SIGNED_RATIONAL = 0x0a;
+	public static final int FORMAT_UNSIGNED_BYTE = 0x01;
+	public static final int FORMAT_ASCII_STRINGS = 0x02;
+	public static final int FORMAT_UNSIGNED_SHORT = 0x03;
+	public static final int FORMAT_UNSIGNED_LONG = 0x04;
+	public static final int FORMAT_UNSIGNED_RATIONAL = 0x05;
+	public static final int FORMAT_SIGNED_BYTE = 0x06;
+	public static final int FORMAT_UNDEFINED = 0x07;
+	public static final int FORMAT_SIGNED_SHORT = 0x08;
+	public static final int FORMAT_SIGNED_LONG = 0x09;
+	public static final int FORMAT_SIGNED_RATIONAL = 0x0a;
+	// Convenience 'hash' for finding component bit width (see above formats)
+	public static final int[] COMP_WIDTHS = new int[] { 0, 1, 1, 2, 4, 8, 1, 1,
+	    2, 4, 8 };
+	// Pointer values
 	private final int TAG_EXIF_POINTER = 0x8769;
 	private final int TAG_GPS_POINTER = 0x8825;
 	private final int TAG_INTEROPERABILITY_POINTER = 0xa005;
@@ -183,8 +193,6 @@ public class ExifDriver {
 	// IFD Interoperability tags
 	public static final int TAG_INTEROPERABILITY_1 = 0x1;
 	public static final int TAG_INTEROPERABILITY_2 = 0x2;
-	// Others
-	private final HashMap<Integer, Integer> COMP_WIDTHS = new HashMap<Integer, Integer>();
 	// Length of Exif data size declaration - 2B
 	private final int LENGTH_EXIF_SIZE_DECL = 2;
 	private final int LENGTH_APP1_EXIF_HEADER = 10;// APP1Marker+EXIF size + EXIF
@@ -199,12 +207,11 @@ public class ExifDriver {
 	private final byte[] TIFFHeader = new byte[] { 'I', 'I', (byte) 0x2A, '\0',
 	    (byte) 0x08, '\0', '\0', '\0' };
 	// Specification requires this tag to have this value
-	private final Byte[] GPSVersionID = new Byte[] { 2, 2, 0, 0 };
 	private int origAPP1MarkerOffset = 2;
 	private int origThumbnailOffset = -1;
 	private int origThumbnailLength = 0;
-	private final int ALIGN_II = 0x4949; // Intel endian
-	private final int ALIGN_MM = 0x4D4D; // Motorola endian
+	public static final int ALIGN_II = 0x4949; // Intel endian
+	public static final int ALIGN_MM = 0x4D4D; // Motorola endian
 	private int originalAlign; // endian
 	// IFD directories are represented as simple tag-value hashes
 	private HashMap<Integer, ExifValue> ifd0 = new HashMap<Integer, ExifValue>();
@@ -248,17 +255,6 @@ public class ExifDriver {
 	 *          Path of file to work with
 	 */
 	private ExifDriver(String _file) {
-		// Convenience hash for finding component bit width
-		COMP_WIDTHS.put(FORMAT_UNSIGNED_BYTE, 1);
-		COMP_WIDTHS.put(FORMAT_ASCII_STRINGS, 1);
-		COMP_WIDTHS.put(FORMAT_UNSIGNED_SHORT, 2);
-		COMP_WIDTHS.put(FORMAT_UNSIGNED_LONG, 4);
-		COMP_WIDTHS.put(FORMAT_UNSIGNED_RATIONAL, 8);
-		COMP_WIDTHS.put(FORMAT_SIGNED_BYTE, 1);
-		COMP_WIDTHS.put(FORMAT_UNDEFINED, 1);
-		COMP_WIDTHS.put(FORMAT_SIGNED_SHORT, 2);
-		COMP_WIDTHS.put(FORMAT_SIGNED_LONG, 4);
-		COMP_WIDTHS.put(FORMAT_SIGNED_RATIONAL, 8);
 		sourceFile = _file;
 		readyToWork = true; // Hope for the best;
 		byte[] findBuffer = new byte[100];
@@ -356,21 +352,22 @@ public class ExifDriver {
 	 * with information.
 	 * 
 	 * @param _data
+	 * @throws UndefinedValueAccessException
 	 * @throws Exception
 	 */
-	private void readExifData(byte[] _data) {
+	private void readExifData(byte[] _data) throws UndefinedValueAccessException {
 		originalAlign = (_data[0] << 8) + (_data[1] & 0xFF);
-		int ifdStart = readUInt(_data, 4, 4); // See the TIFF header
+		int ifdStart = readUInt(_data, 4, 4, originalAlign); // See the TIFF header
 		ifdStart = readIfd(ifd0, _data, ifdStart);
 		// Was there any IFD1 reference?
 		if (ifdStart > 0) {
 			readIfd(ifd1, _data, ifdStart);
 			// Remember thumbnail info
 			if (ifd1.containsKey(TAG_JPEG_INTERCHANGE_FORMAT)) {
-				origThumbnailOffset = (Integer) ifd1.get(TAG_JPEG_INTERCHANGE_FORMAT)
-				    .getValues()[0];
-				origThumbnailLength = (Integer) ifd1.get(
-				    TAG_JPEG_INTERCHANGE_FORMAT_LENGTH).getValues()[0];
+				origThumbnailOffset = ifd1.get(TAG_JPEG_INTERCHANGE_FORMAT)
+				    .getIntegers()[0];
+				origThumbnailLength = ifd1.get(TAG_JPEG_INTERCHANGE_FORMAT_LENGTH)
+				    .getIntegers()[0];
 				/*
 				 * Log.v( LOGTAG, "Thumbnail offs/length: " +
 				 * Integer.toHexString(origThumbnailOffset) + "/" +
@@ -382,17 +379,16 @@ public class ExifDriver {
 		}
 		// Is there a IFDExif reference?
 		if (ifd0.get(TAG_EXIF_POINTER) != null) {
-			ifdStart = ((ValueLongs) ifd0.get(TAG_EXIF_POINTER)).getValues()[0];
+			ifdStart = ifd0.get(TAG_EXIF_POINTER).getIntegers()[0];
 			readIfd(ifdExif, _data, ifdStart);
 			if (ifdExif.get(TAG_INTEROPERABILITY_POINTER) != null) {
-				ifdStart = ((ValueLongs) ifdExif.get(TAG_INTEROPERABILITY_POINTER))
-				    .getValues()[0];
+				ifdStart = ifdExif.get(TAG_INTEROPERABILITY_POINTER).getIntegers()[0];
 				readIfd(ifdIOper, _data, ifdStart);
 			}
 		}
 		// Is there a IFDGPS reference?
 		if (ifd0.get(TAG_GPS_POINTER) != null) {
-			ifdStart = ((ValueLongs) ifd0.get(TAG_GPS_POINTER)).getValues()[0];
+			ifdStart = ifd0.get(TAG_GPS_POINTER).getIntegers()[0];
 			readIfd(ifdGps, _data, ifdStart);
 		}
 	}
@@ -412,7 +408,7 @@ public class ExifDriver {
 	 * @throws Exception
 	 */
 	private int readIfd(HashMap<Integer, ExifValue> _ifd, byte[] _data, int _start) {
-		int entriesNumber = readUInt(_data, _start, 2);
+		int entriesNumber = readUInt(_data, _start, 2, originalAlign);
 		if (debug) {
 			System.out.println(entriesNumber
 			    + " entries found in ifd begining at "
@@ -424,12 +420,12 @@ public class ExifDriver {
 			// length of each item
 			// Parse item structure (2B-tag, 2B-datatype, 4B number of
 			// components, 4B value(or offset to value))
-			int tag = readUInt(_data, entryStart, 2);
-			int datatype = readUInt(_data, entryStart + 2, 2);
-			int components = readUInt(_data, entryStart + 4, 4);
+			int tag = readUInt(_data, entryStart, 2, originalAlign);
+			int datatype = readUInt(_data, entryStart + 2, 2, originalAlign);
+			int components = readUInt(_data, entryStart + 4, 4, originalAlign);
 			// If the totalLength is >4 it does not fit in directory
 			int totalLength = 0;
-			Object dType = COMP_WIDTHS.get(datatype);
+			Object dType = COMP_WIDTHS[datatype];
 			if (dType != null) {
 				totalLength = components * (Integer) dType;
 			} else {
@@ -440,7 +436,7 @@ public class ExifDriver {
 			int offset = entryStart + 8;
 			if (totalLength > 4) {
 				// Offset in data area
-				offset = readUInt(_data, offset, 4);
+				offset = readUInt(_data, offset, 4, originalAlign);
 			}
 			if (debug) {
 				if (tag == TAG_INTEROPERABILITY_POINTER || tag == TAG_EXIF_POINTER
@@ -453,63 +449,32 @@ public class ExifDriver {
 					        + LENGTH_APP1_EXIF_HEADER + offset));
 				}
 			}
+			ExifValue value = null;
 			switch (datatype) {
 			case FORMAT_UNSIGNED_BYTE:
-				ValueUBytes uByteValue = new ValueUBytes();
-				uByteValue.setValue(uByteValue.readUnsigned(_data, offset, components));
-				_ifd.put(tag, uByteValue);
+			case FORMAT_UNSIGNED_SHORT:
+			case FORMAT_UNSIGNED_LONG:
+			case FORMAT_SIGNED_BYTE:
+			case FORMAT_SIGNED_SHORT:
+			case FORMAT_SIGNED_LONG:
+				value = new ValueNumber(datatype);
 				break;
 			case FORMAT_ASCII_STRINGS:
-				ValueAsciiStrings baValue = new ValueAsciiStrings();
-				baValue.setValue(baValue.readBytes(_data, offset, components));
-				_ifd.put(tag, baValue);
-				//System.out.println(new String(_data,offset,components));
-				break;
 			case FORMAT_UNDEFINED:
-				ValueUndefined unValue = new ValueUndefined();
-				unValue.setValue(unValue.readBytes(_data, offset, components));
-				_ifd.put(tag, unValue);
-				break;
-			case FORMAT_UNSIGNED_SHORT:
-				ValueUShorts uShortValue = new ValueUShorts();
-				uShortValue.setValue(uShortValue
-				    .readUnsigned(_data, offset, components));
-				_ifd.put(tag, uShortValue);
-				break;
-			case FORMAT_UNSIGNED_LONG:
-				ValueLongs uLongValue = new ValueLongs();
-				uLongValue.setValue(uLongValue.readUnsigned(_data, offset, components));
-				_ifd.put(tag, uLongValue);
+				value = new ValueByteArray(datatype);
 				break;
 			case FORMAT_UNSIGNED_RATIONAL:
-				ValueURationals uRatValue = new ValueURationals();
-				uRatValue.setValue(uRatValue.readUnsigned(_data, offset, components));
-				_ifd.put(tag, uRatValue);
-				break;
-			case FORMAT_SIGNED_BYTE:
-				ValueSBytes sByteValue = new ValueSBytes();
-				sByteValue.setValue(sByteValue.readSigned(_data, offset, components));
-				_ifd.put(tag, sByteValue);
-				break;
-			case FORMAT_SIGNED_SHORT:
-				ValueSShorts sShortValue = new ValueSShorts();
-				sShortValue.setValue(sShortValue.readSigned(_data, offset, components));
-				_ifd.put(tag, sShortValue);
-				break;
-			case FORMAT_SIGNED_LONG:
-				ValueSLongs sLongValue = new ValueSLongs();
-				sLongValue.setValue(sLongValue.readSigned(_data, offset, components));
-				_ifd.put(tag, sLongValue);
-				break;
 			case FORMAT_SIGNED_RATIONAL:
-				ValueSRationals sRatValue = new ValueSRationals();
-				sRatValue.setValue(sRatValue.readSigned(_data, offset, components));
-				_ifd.put(tag, sRatValue);
+				value = new ValueRationals(datatype);
 				break;
+			}
+			if (value != null) {
+				value.readValueFromData(_data, offset, components, originalAlign);
+				_ifd.put(tag, value);
 			}
 		}
 		// Return the long value represented by 4B after the last entry
-		return readUInt(_data, _start + entriesNumber * 12 + 2, 4);
+		return readUInt(_data, _start + entriesNumber * 12 + 2, 4, originalAlign);
 	}
 
 	/**
@@ -521,12 +486,15 @@ public class ExifDriver {
 	 *          offset, where the value starts
 	 * @param _bytesNumber
 	 *          Number of bytes (1,2,4 for byte, short, long)
+	 * @param _align
+	 *          - Endian
 	 * @return Integer value
 	 */
-	private Integer readSInt(byte[] _data, int _offset, int _bytesNumber) {
+	public static Integer readSInt(byte[] _data, int _offset, int _bytesNumber,
+	    int _align) {
 		int signMask = 1 << (_bytesNumber * 8 - 1);
 		int valueMask = 0xFFFFFFFF >>> (4 - _bytesNumber) * 8 + 1;
-		int value = readUInt(_data, _offset, _bytesNumber) & valueMask;
+		int value = readUInt(_data, _offset, _bytesNumber, _align) & valueMask;
 		if ((value & signMask) > 0) {
 			value = -value;
 		}
@@ -542,12 +510,15 @@ public class ExifDriver {
 	 *          offset, where the value starts
 	 * @param _bytesNumber
 	 *          Number of bytes (1,2,4 for byte, short, long)
+	 * @param _align
+	 *          - Endian
 	 * @return Integer value
 	 */
-	private Integer readUInt(byte[] _data, int _offset, int _bytesNumber) {
+	public static Integer readUInt(byte[] _data, int _offset, int _bytesNumber,
+	    int _align) {
 		int result = 0;
 		int shift = 0;
-		switch (originalAlign) {
+		switch (_align) {
 		case ALIGN_MM:
 			shift = _bytesNumber * 8;
 			break;
@@ -556,7 +527,7 @@ public class ExifDriver {
 			break;
 		}
 		for (int i = _offset; i < _bytesNumber + _offset; i++) {
-			switch (originalAlign) {
+			switch (_align) {
 			case ALIGN_MM:
 				shift -= 8;
 				result += (_data[i] & 0xFF) << shift;
@@ -570,15 +541,6 @@ public class ExifDriver {
 		return result;
 	}
 
-	/*
-	 * private void printData(ArrayList<Byte> _data) { String text = ""; for (byte
-	 * value : _data) { text += "|" + Integer.toHexString(value & 0xff); }
-	 * System.out.println(text); }
-	 * 
-	 * private void printData(byte[] _data) { String text = ""; for (byte value :
-	 * _data) { text += "|" + Integer.toHexString(value & 0xff); }
-	 * System.out.println(text); }
-	 */
 	/**
 	 * The total space, that the given IFD requires. It is space required by
 	 * directory itself and it's related data too.
@@ -588,7 +550,7 @@ public class ExifDriver {
 	 * @return Required space in bytes
 	 */
 	private int requiredSpace(HashMap<Integer, ExifValue> _ifd) {
-		int result = 0;
+		int result = 6;// 2B number of items, 4B the "next" address
 		Object[] oKeys = _ifd.keySet().toArray();
 		for (int i = 0; i < oKeys.length; i++) {
 			result += 12;
@@ -596,9 +558,6 @@ public class ExifDriver {
 			if (val != null) {
 				result += val.getExtraSize();
 			}
-		}
-		if (result > 0) {
-			result += 6;// 2B number of items, 4B the "next" address
 		}
 		return result;
 	}
@@ -616,7 +575,8 @@ public class ExifDriver {
 	 * @param _width
 	 *          number of bytes, the number covers
 	 */
-	private void writeNumber(byte[] _data, int _offset, int _value, int _width) {
+	public static void writeNumber(byte[] _data, int _offset, int _value,
+	    int _width) {
 		int mask = 0xFF;
 		for (int i = 0; i < _width; i++) {
 			_data[_offset + i] = (byte) ((_value & (mask << i * 8)) >>> (i * 8));
@@ -641,19 +601,17 @@ public class ExifDriver {
 	private void writeIfd(byte[] _data, HashMap<Integer, ExifValue> _ifd,
 	    int _offset, int _nextOffset) {
 		Object[] oKeys = _ifd.keySet().toArray();
-		if (oKeys.length > 0) {
-			int valuesOffset = _offset + 2 + oKeys.length * 12 + 4;
-			writeNumber(_data, _offset, oKeys.length, 2);
-			int itemOffset = _offset + 2;
-			Arrays.sort(oKeys);
-			for (int i = 0; i < oKeys.length; i++) {
-				Integer key = (Integer) oKeys[i];
-				writeNumber(_data, itemOffset, key, 2);
-				valuesOffset = _ifd.get(key).write(_data, itemOffset, valuesOffset);
-				itemOffset += 12;
-			}
-			writeNumber(_data, itemOffset, _nextOffset, 4);
+		int valuesOffset = _offset + 2 + oKeys.length * 12 + 4;
+		writeNumber(_data, _offset, oKeys.length, 2);
+		int itemOffset = _offset + 2;
+		Arrays.sort(oKeys);
+		for (int i = 0; i < oKeys.length; i++) {
+			Integer key = (Integer) oKeys[i];
+			writeNumber(_data, itemOffset, key, 2);
+			valuesOffset = _ifd.get(key).writeToData(_data, itemOffset, valuesOffset);
+			itemOffset += 12;
 		}
+		writeNumber(_data, itemOffset, _nextOffset, 4);
 	}
 
 	/**
@@ -672,21 +630,16 @@ public class ExifDriver {
 		int startOfThumbnail = startOfIfd1 + requiredSpace(ifd1);
 		int reqSize = startOfThumbnail + origThumbnailLength;
 		// Write directory referencies
-		//if (!ifdExif.isEmpty()) {
-			ifd0.put(TAG_EXIF_POINTER, new ValueLongs(startOfIfdExif));
-		//}
-		//if (!ifdGps.isEmpty()) {
-			ifd0.put(TAG_GPS_POINTER, new ValueLongs(startOfIfdGps));
-		//}
-		//if (!ifdIOper.isEmpty()) {
-			ifdExif
-			    .put(TAG_INTEROPERABILITY_POINTER, new ValueLongs(startOfIfdIOper));
-		//}
+		ValueNumber val = new ValueNumber(FORMAT_UNSIGNED_LONG, startOfIfdExif);
+		ifd0.put(TAG_EXIF_POINTER, val);
+		val = new ValueNumber(FORMAT_UNSIGNED_LONG, startOfIfdGps);
+		ifd0.put(TAG_GPS_POINTER, val);
+		val = new ValueNumber(FORMAT_UNSIGNED_LONG, startOfIfdIOper);
+		ifdExif.put(TAG_INTEROPERABILITY_POINTER, val);
 		// Adjust referencies to image data
-		//if (origThumbnailOffset > 0) {
-			ValueLongs val = new ValueLongs(startOfThumbnail);
-			ifd1.put(TAG_JPEG_INTERCHANGE_FORMAT, val);
-		//}
+		val = new ValueNumber(FORMAT_UNSIGNED_LONG, startOfThumbnail);
+		ifd1.put(TAG_JPEG_INTERCHANGE_FORMAT, val);
+		// }
 		// Write all headers
 		byte[] resultExif = new byte[reqSize];
 		byte[] exifHeader = new byte[] { (byte) 0xFF, (byte) 0xE1, 0, 0,
@@ -720,6 +673,7 @@ public class ExifDriver {
 			while (skipped < imageOffset) {
 				int skip = (int) fis.skip(imageOffset - skipped);
 				if (skip < 0) {
+					fos.close();
 					throw (new IOException());
 				} else {
 					skipped += skip;
@@ -745,422 +699,6 @@ public class ExifDriver {
 				    .log(Level.SEVERE, null, ex);
 			}
 
-		}
-	}
-
-	/*
-	 * Private classes representing datatypes
-	 */
-	/**
-	 * Parent class of all datatypes. It defines basic operations. Some of them
-	 * are overloaded in derived classes.
-	 * 
-	 * @param <E>
-	 */
-	public abstract class ExifValue<E> {
-
-		/**
-		 * Amount of extra space that this value needs. All values store their
-		 * components right into directory if their total amount is less then 4B. In
-		 * opposite case they stores to directory only offset, where the data are
-		 * stored. Extra space is therefore 0 or totalLength of data.
-		 */
-		protected int extraSpace = 0;
-		/**
-		 * Array of components. Scalar types use mostly one component, but many tags
-		 * are described with more than one component.
-		 */
-		protected E[] components;
-
-		/**
-		 * Returns array of components. Scalar types use mostly one component, but
-		 * many tags are described with more than one component.
-		 * 
-		 * @return Array of components
-		 */
-		public E[] getValues() {
-			return components;
-		}
-
-		/**
-		 * Set all components in a one single step. Components therefore have to be
-		 * prepared in proper array before.
-		 * 
-		 * @param _values
-		 */
-		public void setValue(E[] _values) {
-			components = _values;
-			setExtraSize();
-		}
-
-		/**
-		 * Returns size of one single component. For example if Value holds
-		 * components of type UNSIGNED_BYTE, it returns 1.
-		 * 
-		 * @return Size of one single component
-		 */
-		public final int getComponentSize() {
-			return (Integer) COMP_WIDTHS.get(getDataType());
-		}
-
-		/**
-		 * Total size of components. In case that value holds 4 components of type
-		 * UNSIGNED_SHORT, it returns 8;
-		 * 
-		 * @return Total size of components
-		 */
-		public final int getTotalSize() {
-			return components.length * getComponentSize();
-		}
-
-		protected final void setExtraSize() {
-			if (getTotalSize() > 4) {
-				extraSpace = getTotalSize();
-			} else {
-				extraSpace = 0;
-			}
-		}
-
-		/**
-		 * Returns of extra space that this value needs. All values store their
-		 * components right into directory if their total amount is less then 4B. In
-		 * opposite case they stores to directory only offset, where the data are
-		 * stored. Extra space is therefore 0 or totalLength of data.
-		 * 
-		 * @return Extra space that this value uses
-		 */
-		public final int getExtraSize() {
-			return extraSpace;
-		}
-
-		/**
-		 * This method implements the special way, in which the value saves it's
-		 * components.
-		 * 
-		 * @param _data
-		 *          - output array
-		 * @param _offset
-		 *          - offset where to save the components
-		 */
-		protected abstract void writeValues(byte[] _data, int _offset);
-
-		/**
-		 * Write this component to specified place in output data.
-		 * 
-		 * @param _data
-		 *          Output data array
-		 * @param _itemOffset
-		 *          Offset of IFD directory record
-		 * @param _valuesOffset
-		 *          Offset of the first free byte in IFD's data
-		 * @return Offset of the first free byte in IFD's data. In case, that the
-		 *         value does not use any extra space, return value will equal to
-		 *         _valuesOffset.
-		 */
-		public final int write(byte[] _data, int _itemOffset, int _valuesOffset) {
-			writeNumber(_data, _itemOffset + 2, getDataType(), 2);
-			writeNumber(_data, _itemOffset + 4, getValues().length, 4);
-			int valueOffset = _itemOffset + 8;
-			if (extraSpace > 0) {
-				writeNumber(_data, valueOffset, _valuesOffset, 4);
-				writeValues(_data, _valuesOffset);
-				return _valuesOffset + extraSpace;
-			} else {
-				writeValues(_data, valueOffset);
-				return _valuesOffset;
-			}
-		}
-
-		/**
-		 * Returns the datatype of this value
-		 * 
-		 * @return Datatype
-		 */
-		public abstract int getDataType();
-	}
-
-	/**
-	 * Common abstract superclass for ValueAscii and ValueUndefined, which are
-	 * treated as simple byte arrays
-	 */
-	public abstract class ValueByteArray extends ExifValue<Byte> {
-
-		/**
-		 * Read it's value (array of bytes) from given source
-		 * 
-		 * @param _data
-		 *          Source array to read from
-		 * @param _offset
-		 *          Offset where to start reading
-		 * @param _count
-		 *          Amount of bytes to read
-		 * @return
-		 */
-		public Byte[] readBytes(byte[] _data, int _offset, int _count) {
-			byte[] forValue = new byte[_count];
-			System.arraycopy(_data, _offset, forValue, 0, _count);
-			Byte[] result = new Byte[forValue.length];
-			for (int i = 0; i < forValue.length; i++) {
-				result[i] = forValue[i];
-			}
-			return result;
-		}
-
-		@Override
-		protected void writeValues(byte[] _data, int _offset) {
-			for (int i = 0; i < components.length; i++) {
-				_data[_offset + i] = (Byte) components[i];
-			}
-		}
-	}
-
-	/**
-	 * Ascii strings datatype
-	 */
-	public class ValueAsciiStrings extends ValueByteArray {
-
-		public int getDataType() {
-			return FORMAT_ASCII_STRINGS;
-		}
-	}
-
-	/**
-	 * Undefined datatype
-	 */
-	public class ValueUndefined extends ValueByteArray {
-
-		public int getDataType() {
-			return FORMAT_UNDEFINED;
-		}
-	}
-
-	/**
-	 * Basic class for scalar number data types. Implements Methods for Reading
-	 * and writing signed and unsigned values, same as constructor from value.
-	 */
-	public abstract class ValueNumbers extends ExifValue<Integer> {
-
-		public ValueNumbers() {
-			super();
-		}
-
-		/**
-		 * Construct from value. Sets the count of components to 1 and it's value to
-		 * _value.
-		 * 
-		 * @param _value
-		 *          Value to set as the only one component.
-		 */
-		public ValueNumbers(int _value) {
-			components = new Integer[1];
-			components[0] = _value;
-			extraSpace = 0;
-		}
-
-		/**
-		 * Read unsigned values from source data. It uses own information about
-		 * component size to determine, how much bytes read for one component.
-		 * 
-		 * @param _data
-		 *          Source byte array
-		 * @param _offset
-		 *          Where to start the reading
-		 * @param _count
-		 *          How much components to read
-		 * @return Array of read components
-		 */
-		public Integer[] readUnsigned(byte[] _data, int _offset, int _count) {
-			Integer[] uValues = new Integer[_count];
-			for (int v = 0; v < _count; v++) {
-				uValues[v] = readUInt(_data, _offset + getComponentSize() * v,
-				    getComponentSize());
-			}
-			return uValues;
-		}
-
-		/**
-		 * Read signed values from source data. It uses own information about
-		 * component size to determine, how much bytes read for one component.
-		 * 
-		 * @param _data
-		 *          Source byte array
-		 * @param _offset
-		 *          Where to start the reading
-		 * @param _count
-		 *          How much components to read
-		 * @return Array of read components
-		 */
-		public Integer[] readSigned(byte[] _data, int _offset, int _count) {
-			Integer[] uValues = new Integer[_count];
-			for (int v = 0; v < _count; v++) {
-				uValues[v] = readSInt(_data, _offset + getComponentSize() * v,
-				    getComponentSize());
-			}
-			return uValues;
-		}
-
-		@Override
-		protected void writeValues(byte[] _data, int _offset) {
-			for (int i = 0; i < components.length; i++) {
-				writeNumber(_data, _offset + getComponentSize() * i, components[i],
-				    getComponentSize());
-			}
-		}
-	}
-
-	/**
-	 * Unsigned byte value. Only overloads the function which returns it's data
-	 * type
-	 */
-	public class ValueUBytes extends ValueNumbers {
-
-		public int getDataType() {
-			return FORMAT_UNSIGNED_BYTE;
-		}
-	}
-
-	/**
-	 * Signed byte value. Only overloads the function which returns it's data type
-	 */
-	public class ValueSBytes extends ValueNumbers {
-
-		public int getDataType() {
-			return FORMAT_SIGNED_BYTE;
-		}
-	}
-
-	/**
-	 * Unsigned shorts (or pants ;-) . Only overloads the function which returns
-	 * it's data type
-	 */
-	public class ValueUShorts extends ValueNumbers {
-
-		public int getDataType() {
-			return FORMAT_UNSIGNED_SHORT;
-		}
-	}
-
-	/**
-	 * Signed shorts (or pants ;-). Only overloads the function which returns it's
-	 * data type
-	 */
-	public class ValueSShorts extends ValueNumbers {
-
-		public int getDataType() {
-			return FORMAT_SIGNED_SHORT;
-		}
-	}
-
-	/**
-	 * Unsigned longs. Only overloads the function which returns it's data type
-	 */
-	public class ValueLongs extends ValueNumbers {
-
-		public ValueLongs() {
-			super();
-		}
-
-		public ValueLongs(int _value) {
-			super(_value);
-		}
-
-		public int getDataType() {
-			return FORMAT_UNSIGNED_LONG;
-		}
-	}
-
-	/**
-	 * Signed longs. Only overloads the function which returns it's data type
-	 */
-	public class ValueSLongs extends ValueNumbers {
-
-		public ValueSLongs() {
-			super();
-		}
-
-		public ValueSLongs(int _value) {
-			super(_value);
-		}
-
-		public int getDataType() {
-			return FORMAT_SIGNED_LONG;
-		}
-	}
-
-	/**
-	 * Base class for rationals. Implements writting method, which is basically
-	 * the same for signed and unsigned variant.
-	 */
-	public abstract class ValueRationals extends ExifValue<int[]> {
-
-		@Override
-		protected void writeValues(byte[] _data, int _offset) {
-			for (int i = 0; i < components.length; i++) {
-				writeNumber(_data, _offset + i * getComponentSize(), components[i][0],
-				    getComponentSize() / 2);
-				writeNumber(_data, _offset + i * getComponentSize()
-				    + getComponentSize() / 2, components[i][1], getComponentSize() / 2);
-			}
-		}
-	}
-
-	/**
-	 * Unsigned rationals. Implements the read method and the 'getDataType' method
-	 */
-	public class ValueURationals extends ValueRationals {
-
-		/**
-		 * Read pairs of unsigned values from source byte array.
-		 * 
-		 * @param _data
-		 *          Byte array to read from
-		 * @param _offset
-		 *          Offset where to start
-		 * @param _count
-		 *          Count of rationals values
-		 * @return Array of two-values arrays represeting rationals
-		 */
-		private int[][] readUnsigned(byte[] _data, int _offset, int _count) {
-			int[][] result = new int[_count][2];
-			for (int v = 0; v < _count; v++) {
-				result[v][0] = readUInt(_data, _offset + 8 * v, 4);
-				result[v][1] = readUInt(_data, _offset + 8 * v + 4, 4);
-			}
-			return result;
-		}
-
-		public int getDataType() {
-			return FORMAT_UNSIGNED_RATIONAL;
-		}
-	}
-
-	/**
-	 * Unsigned rationals. Implements the read method and the 'getDataType' method
-	 */
-	public class ValueSRationals extends ValueRationals {
-
-		/**
-		 * Read pairs of signed values from source byte array.
-		 * 
-		 * @param _data
-		 *          Byte array to read from
-		 * @param _offset
-		 *          Offset where to start
-		 * @param _count
-		 *          Count of rationals values
-		 * @return Array of two-values arrays represeting rationals
-		 */
-		private int[][] readSigned(byte[] _data, int _offset, int _count) {
-			int[][] result = new int[_count][2];
-			for (int v = 0; v < _count; v++) {
-				result[v][0] = readSInt(_data, _offset + 8 * v, 4);
-				result[v][1] = readSInt(_data, _offset + 8 * v + 4, 4);
-			}
-			return result;
-		}
-
-		public int getDataType() {
-			return FORMAT_SIGNED_RATIONAL;
 		}
 	}
 
